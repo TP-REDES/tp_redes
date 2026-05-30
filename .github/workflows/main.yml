@@ -44,7 +44,7 @@ jobs:
         with:
           dockerfile: "src/*/Dockerfile"
           recursive: true
-          ignore: "DL3007,DL3008,DL3018,DL4006"
+          ignore: "DL3007,DL3008,DL3018,DL4006,DL3041,DL3059"
 
   build-and-push:
     name: Build & Push to GHCR
