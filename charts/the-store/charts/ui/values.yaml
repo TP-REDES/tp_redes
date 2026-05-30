@@ -1,0 +1,45 @@
+replicaCount: 1
+
+image:
+  repository: the-store-ui
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 128m
+    memory: 512Mi
+
+endpoints:
+  catalog: http://catalog
+  carts: http://carts
+  checkout: http://checkout
+  orders: http://orders
+
+service:
+  type: ClusterIP
+  port: 80
+
+readinessProbe:
+  path: /actuator/health/readiness
+  initialDelaySeconds: 10
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+serviceAccount:
+  name: ui
+
+strategy:
+  rollingUpdate:
+    maxUnavailable: 1
+
+ingress:
+  enabled: true
+  className: nginx
+  host: localhost

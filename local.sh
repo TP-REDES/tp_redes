@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Automatically include user local bin in PATH for Kind, kubectl and Helm
+export PATH="$HOME/.local/bin:$PATH"
+
 # Global configuration
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 SERVICES="catalog cart checkout orders ui"
@@ -45,13 +48,23 @@ check_prerequisites() {
         exit 1
     fi
     print_success "Kubectl is installed"
+
+    if ! command -v helm &> /dev/null; then
+        print_error "Helm is not installed. Please install Helm first."
+        exit 1
+    fi
+    print_success "Helm is installed"
 }
 
 create_cluster_and_deploy() {
     create_cluster
     install_ingress
-    build_images
-    load_images
+    if [ "$SKIP_BUILD" = true ]; then
+        print_warning "Build and load images skipped"
+    else
+        build_images
+        load_images
+    fi
     deploy_services
 
     [ "$SKIP_TESTS" = true ] && print_warning "Tests skipped" || run_e2e_tests
@@ -164,8 +177,14 @@ deploy_services() {
         print_success "Namespace '$NAMESPACE' is ready"
     fi
 
-    print_status "Applying Kubernetes manifests to namespace '$NAMESPACE'..."
-    kubectl apply -f $DIR/dist/kubernetes.yaml -n $NAMESPACE
+    print_status "Deploying services using Helm umbrella chart to namespace '$NAMESPACE'..."
+    HELM_CMD="helm"
+    if ! command -v helm &> /dev/null; then
+        HELM_CMD="$HOME/.local/bin/helm"
+    fi
+
+    $HELM_CMD upgrade --install $CLUSTER_NAME $DIR/charts/the-store --namespace $NAMESPACE --create-namespace \
+        --set global.imageTag=$IMAGE_TAG
 
     print_status "Waiting for all deployments to be available..."
     kubectl wait --namespace $NAMESPACE --for=condition=available deployments --timeout=300s --all
@@ -250,6 +269,7 @@ show_help() {
     echo "  -n, --namespace NAME Kubernetes namespace (default: the-store)"
     echo "  --skip-tests         Skip running e2e tests when creating/rebuilding cluster"
     echo "  --skip-status        Skip status display when creating/rebuilding cluster"
+    echo "  --skip-build         Skip building and loading docker images when creating cluster"
     echo "  -h, --help           Show this help"
 }
 
@@ -338,6 +358,7 @@ main() {
     NAMESPACE="the-store"
     SKIP_TESTS=false
     SKIP_STATUS=false
+    SKIP_BUILD=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -346,6 +367,7 @@ main() {
             -n|--namespace) NAMESPACE="$2"; shift 2 ;;
             --skip-tests) SKIP_TESTS=true; shift ;;
             --skip-status) SKIP_STATUS=true; shift ;;
+            --skip-build) SKIP_BUILD=true; shift ;;
             -h|--help) show_help; exit 0 ;;
             *) echo "Unknown option: $1"; show_help; exit 1 ;;
         esac

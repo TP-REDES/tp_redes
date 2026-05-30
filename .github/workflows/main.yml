@@ -1,4 +1,4 @@
-name: Deploy services to local cluster
+name: CI/CD Pipeline - The Store
 
 on:
   push:
@@ -6,46 +6,161 @@ on:
       - main
     paths:
       - 'src/**'
+      - 'charts/**'
+      - 'local.sh'
+      - '.github/workflows/main.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'charts/**'
       - 'local.sh'
       - '.github/workflows/main.yml'
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  deploy:
+  static-validation:
+    name: Static Validation (Linting)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.12.0'
+
+      - name: Lint Helm Chart
+        run: |
+          helm lint charts/the-store/
+
+      - name: Lint Dockerfiles
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: "src/*/Dockerfile"
+          recursive: true
+          ignore: "DL3007,DL3008,DL3018,DL4006"
+
+  build-and-push:
+    name: Build & Push to GHCR
+    needs: static-validation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest]
-    name: On ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-
+        service: [catalog, cart, checkout, orders, ui]
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker
-      uses: docker/setup-docker-action@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Set up Kind
-      uses: helm/kind-action@v1
-      with:
-        install_only: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Create Kind cluster and deploy services
-      run: |
-        ./local.sh create-cluster --skip-tests --skip-status
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Check status
-      run: |
-        ./local.sh status
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/the-store-${{ matrix.service }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
 
-    - name: Run E2E tests
-      run: |
-        ./local.sh e2e-test
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    - name: Clean up cluster
-      run: |
-        ./local.sh delete-cluster
-        if kind get clusters | grep -q .; then
-          echo "ERROR: Clusters still exist after cleanup"
-          exit 1
-        fi
+  deploy-and-test:
+    name: CD (Deploy & E2E Test)
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Kind Cluster and Setup Ingress
+        run: |
+          # Create cluster and install Ingress controller, but skip build, load, deploy, tests
+          ./local.sh create-cluster --skip-build --skip-tests --skip-status
+
+      - name: Pull and Load Images from GHCR
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          TAG="sha-${SHA_SHORT}"
+          
+          for service in catalog cart checkout orders ui; do
+            IMAGE_GHCR="ghcr.io/${{ github.repository }}/the-store-$service:${TAG}"
+            echo "Pulling $IMAGE_GHCR..."
+            docker pull $IMAGE_GHCR
+            
+            # Tag locally so local.sh Helm deployment can find it without GHCR credentials in Kind
+            docker tag $IMAGE_GHCR the-store-$service:${TAG}
+            
+            echo "Loading the-store-$service:${TAG} into Kind..."
+            kind load docker-image the-store-$service:${TAG} --name the-store
+          done
+
+      - name: Deploy Services via Helm
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          TAG="sha-${SHA_SHORT}"
+          
+          # Use local.sh with skip-build option to deploy using Helm and wait for availability
+          ./local.sh create-cluster --skip-build --skip-tests --skip-status -c the-store --namespace the-store
+          
+          # Force deploy with the correct commit-specific image tag
+          helm upgrade --install the-store ./charts/the-store --namespace the-store --set global.imageTag=${TAG}
+
+      - name: Wait for deployments to be ready
+        run: |
+          echo "Waiting for deployments..."
+          kubectl wait --namespace the-store --for=condition=available deployments --timeout=300s --all
+          kubectl wait --namespace the-store --for=condition=ready pods --timeout=300s --all
+
+      - name: Run E2E Tests (Gatekeeper)
+        run: |
+          if ! ./local.sh e2e-test; then
+            echo "::error::E2E Tests failed! Initiating automatic Helm rollback to protect production..."
+            REVISIONS=$(helm history the-store --namespace the-store 2>/dev/null | grep -c "^[0-9]" || echo "0")
+            if [ "$REVISIONS" -gt 1 ]; then
+              helm rollback the-store --namespace the-store
+              echo "Successfully rolled back to the previous stable revision."
+            else
+              echo "No previous revision found to rollback to. Uninstalling failed release..."
+              helm uninstall the-store --namespace the-store
+            fi
+            exit 1
+          fi
+
+      - name: Clean up Cluster
+        if: always()
+        run: |
+          ./local.sh delete-cluster

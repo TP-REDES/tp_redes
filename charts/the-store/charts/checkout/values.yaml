@@ -1,0 +1,36 @@
+replicaCount: 1
+
+image:
+  repository: the-store-checkout
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    memory: 256Mi
+  requests:
+    cpu: 128m
+    memory: 256Mi
+
+persistence:
+  provider: in-memory
+
+service:
+  type: ClusterIP
+  port: 80
+
+readinessProbe:
+  path: /health
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+serviceAccount:
+  name: checkout
+
+strategy:
+  rollingUpdate:
+    maxUnavailable: 1

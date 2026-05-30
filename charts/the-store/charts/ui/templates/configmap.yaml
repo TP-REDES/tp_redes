@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ui
+  labels:
+    app.kubernetes.io/name: ui
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: service
+    app.kubernetes.io/owner: retail-store-sample
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  RETAIL_UI_ENDPOINTS_CATALOG: {{ .Values.endpoints.catalog | default "http://catalog" }}
+  RETAIL_UI_ENDPOINTS_CARTS: {{ .Values.endpoints.carts | default "http://carts" }}
+  RETAIL_UI_ENDPOINTS_CHECKOUT: {{ .Values.endpoints.checkout | default "http://checkout" }}
+  RETAIL_UI_ENDPOINTS_ORDERS: {{ .Values.endpoints.orders | default "http://orders" }}

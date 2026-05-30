@@ -1,0 +1,38 @@
+replicaCount: 1
+
+image:
+  repository: the-store-catalog
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    memory: 256Mi
+  requests:
+    cpu: 256m
+    memory: 256Mi
+
+persistence:
+  provider: in-memory
+  dbUser: catalog
+  dbPassword: Vxq1xLRUKsYWvb4m
+
+service:
+  type: ClusterIP
+  port: 80
+
+readinessProbe:
+  path: /health
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+serviceAccount:
+  name: catalog
+
+strategy:
+  rollingUpdate:
+    maxUnavailable: 1

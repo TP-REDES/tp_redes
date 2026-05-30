@@ -1,0 +1,40 @@
+replicaCount: 1
+
+image:
+  repository: the-store-orders
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 256m
+    memory: 512Mi
+
+persistence:
+  provider: in-memory
+  messaging: in-memory
+  dbUser: orders
+  dbPassword: qNHkHP8fTr94VI6n
+
+service:
+  type: ClusterIP
+  port: 80
+
+readinessProbe:
+  path: /actuator/health/readiness
+  initialDelaySeconds: 10
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+serviceAccount:
+  name: orders
+
+strategy:
+  rollingUpdate:
+    maxUnavailable: 1
