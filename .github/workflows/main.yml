@@ -186,7 +186,6 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           echo "Waiting for deployments..."
           kubectl wait --namespace the-store --for=condition=available deployments --timeout=300s --all
-          kubectl wait --namespace the-store --for=condition=ready pods --timeout=300s --all
 
       - name: Run E2E Tests (Gatekeeper)
         run: |
