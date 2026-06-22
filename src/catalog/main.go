@@ -60,6 +60,7 @@ import (
 
 func main() {
 	ctx := context.Background()
+	log.Println("POC Caso 1: build selectivo de catalog")
 
 	_, otelPresent := os.LookupEnv("OTEL_SERVICE_NAME")
 
